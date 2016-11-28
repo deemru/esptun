@@ -1,0 +1,9 @@
+[submodule "include/netmap"]
+	path = include/netmap
+	url = https://github.com/deemru/netmap
+[submodule "include/soque"]
+	path = include/soque
+	url = https://github.com/deemru/soque
+[submodule "include/espio"]
+	path = include/espio
+	url = https://github.com/deemru/espio
