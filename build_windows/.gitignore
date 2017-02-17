@@ -1,0 +1,9 @@
+*
+!.gitignore
+!glue\*
+!esptun.ico
+!esptun.rc
+!esptun.sln
+!esptun.vcxproj
+!esptun.vcxproj.filters
+!make.bat

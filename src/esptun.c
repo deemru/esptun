@@ -1,21 +1,152 @@
-/*
-* (C) 2011-2014 Luigi Rizzo, Matteo Landi
-*
-* BSD license
-*
-* A netmap client to bridge two network interfaces
-* (or one interface and the host stack).
-*
-* $FreeBSD: head/tools/tools/netmap/bridge.c 228975 2011-12-30 00:04:11Z uqs $
-*/
+#ifdef _WIN32 // win32 glue
+
+#pragma warning( disable: 4324 ) // structure was padded due to __declspec(align())
+#pragma warning( disable: 4200 ) // nonstandard extension used : zero-sized array in struct/union
+
+// clean netmap build
+#pragma warning( disable: 4244 )
+#pragma warning( disable: 4013 )
+#pragma warning( disable: 4090 )
+#pragma warning( disable: 4047 )
+#pragma warning( disable: 4054 )
+#pragma warning( disable: 4267 ) 
+
+
+#define _CRT_SECURE_NO_WARNINGS
+
+#include <stdio.h>
+#include <stdint.h>
+#include <intsafe.h>
+
+#include <winsock2.h>
+#include <ws2def.h>
+
+#define IFNAMSIZ 44
+#define PROT_READ 1
+#define PROT_WRITE 2
+#define MAP_FAILED ((void*)-1)
+#define MAP_SHARED 0x01
+#define MAP_PRIVATE 0x02
+
+typedef SSIZE_T ssize_t;
+
+#define __attribute__( arg )
+#define __builtin_expect( a, b ) a
+
+#include <sys/timeb.h>
+
+static void gettimeofday( struct timeval * stv, void * unused )
+{
+    struct __timeb64 tb;
+    _ftime64_s( &tb );
+    stv->tv_sec = (long)tb.time;
+    stv->tv_usec = tb.millitm * 1000;
+
+    (void)unused;
+}
+
+#define ioctl win_nm_ioctl
+#define mmap win32_mmap_emulated
+#define poll win_nm_poll
+
+static int index( char * syms, char c )
+{
+    char sym;
+
+    for( ;; )
+    {
+        sym = *syms++;
+
+        if( sym == 0 )
+            break;
+
+        if( sym == c )
+            return 1;
+    }
+
+    return 0;
+}
+
+static char * optarg = NULL;
+static int optind = 0;
+static int argc_inner = 0;
+static char ** argv_inner = NULL;
+static int getopt( int argc, char ** argv, char * opts )
+{
+    char c;
+
+    if( !argv_inner )
+    {
+        argc_inner = 1;
+        argv_inner = &argv[1];
+    }
+
+    if( argc_inner == argc )
+        return -1;
+
+    for( ;; )
+    {
+        c = *opts++;
+
+        if( c == 0 )
+            break;
+
+        if( c == ':' )
+            continue;
+
+        if( ( *argv_inner )[1] == c )
+        {
+            argc_inner++;
+            argv_inner++;
+
+            if( argc - argc_inner > 0 )
+            {
+                optarg = *argv_inner++;
+                argc_inner++;
+            }
+
+            optind = argc_inner;
+            return c;
+        }
+    }
+
+    return -1;
+}
+
+static void munmap( void * mem, uint32_t size )
+{
+    (void)mem;
+    (void)size;
+    return;
+}
+
+static void bzero( void * mem, size_t size )
+{
+    memset( mem, 0, size );
+}
+
+static void sleep( int time )
+{
+    Sleep( time * 1000 );
+}
+
+#endif
 
 #include <stdio.h>
 #define NETMAP_WITH_LIBS
 #include <net/netmap_user.h>
 #include <sys/poll.h>
 
-int verbose = 0;
+#ifdef _WIN32
+#pragma warning( default: 4244 )
+#pragma warning( default: 4013 )
+#pragma warning( default: 4090 )
+#pragma warning( default: 4047 )
+#pragma warning( default: 4054 )
+#pragma warning( default: 4267 ) 
+#endif
 
+static int verbose = 0;
 static int do_abort = 0;
 static int zerocopy = 1; /* enable zerocopy if possible */
 static int threads = 2; // 1 <--> 1
@@ -52,7 +183,7 @@ pkt_queued( struct nm_desc *d, int tx )
     return tot;
 }
 
-#ifdef WINDOWS_CC
+#ifdef _WIN32
 #pragma pack( push, 1 )
 
 #define	ETHER_ADDR_LEN      6
@@ -98,10 +229,22 @@ struct etherip {
 
 #pragma pack( pop )
 
+#ifdef _WIN32
+
+#include "../include/espio/src/espio.h"
+static const ESPIO_FRAMEWORK * eio;
+#include "../include/soque/src/soque.h"
+static const SOQUE_FRAMEWORK * soq;
+
+#else
+
 #define ESPIO_WITH_LOADER
-#include "espio.h"
+#include "../include/espio/src/espio.h"
 #define SOQUE_WITH_LOADER
-#include "soque.h"
+#include "../include/soque/src/soque.h"
+
+#endif
+
 
 static struct etherip etherip;
 
@@ -109,7 +252,7 @@ static struct etherip etherip;
 #define ETHERTYPE_IP 0x0800
 #endif
 
-// 20 bytes ipv4 xsum
+// !20! bytes ipv4 xsum
 static uint16_t ipv4_xsum( uint16_t * ipv4 )
 {
     uint32_t sum = 0;
@@ -120,7 +263,7 @@ static uint16_t ipv4_xsum( uint16_t * ipv4 )
 
     sum = ( sum & 0xFFFF ) + ( sum >> 16 );
 
-    return sum;
+    return (uint16_t)sum;
 }
 
 static void init_esppkt()
@@ -172,7 +315,7 @@ static void finish_esppkt( char * pkt, uint16_t pktlen )
 
     sum = ~sum & 0xFFFF;
 
-    eip->ip.ip_sum = htons( sum );
+    eip->ip.ip_sum = htons( (uint16_t)sum );
     eip->ip.ip_len = htons( pktlen );
 }
 
@@ -263,11 +406,12 @@ static uint16_t checksum( const void *data, uint16_t len, uint32_t sum )
         if( sum > 0xFFFF )
             sum -= 0xFFFF;
     }
-    return sum;
+    return (uint16_t)sum;
 }
 
-int SOQUE_CALL netmap_soque_push( struct nm_soque_espio * nms, unsigned batch, char waitable )
+uint32_t SOQUE_CALL netmap_soque_push( void * cb_arg, uint32_t batch, uint8_t waitable )
 {
+    struct nm_soque_espio * nms = cb_arg;
     uint32_t push_batch;
 
     uint32_t slots_per_ring = nms->src_slots_per_ring;
@@ -351,27 +495,28 @@ int SOQUE_CALL netmap_soque_push( struct nm_soque_espio * nms, unsigned batch, c
     return push_batch;
 }
 
-void SOQUE_CALL netmap_soque_proc( struct nm_soque_espio * nms, unsigned batch, unsigned start_index )
+void SOQUE_CALL esptun_proc( void * cb_arg, SOQUE_BATCH batch )
 {
+    struct nm_soque_espio * nms = cb_arg;
     uint32_t i;
     uint32_t index;
     uint32_t size = nms->src_slots_count;
 
     if( nms->encap )
     {
-        if( start_index + batch <= size )
+        if( batch.index + batch.count <= size )
         {
-            eio->espio_encrypt( nms->eh, batch, &nms->iovs[start_index] );
+            eio->espio_encrypt( nms->eh, batch.count, &nms->iovs[batch.index] );
         }
         else
         {
-            uint32_t first_batch = size - start_index;
+            uint32_t first_batch = size - batch.index;
 
-            eio->espio_encrypt( nms->eh, first_batch, &nms->iovs[start_index] );
-            eio->espio_encrypt( nms->eh, batch - first_batch, &nms->iovs[0] );
+            eio->espio_encrypt( nms->eh, first_batch, &nms->iovs[batch.index] );
+            eio->espio_encrypt( nms->eh, batch.index - first_batch, &nms->iovs[0] );
         }
 
-        for( i = 0, index = start_index;; )
+        for( i = 0, index = batch.index;; )
         {
             ESPIO_IOVEC * iov = &nms->iovs[index];
 
@@ -387,7 +532,7 @@ void SOQUE_CALL netmap_soque_proc( struct nm_soque_espio * nms, unsigned batch, 
                 iov->code--;
             }
 
-            if( ++i == batch )
+            if( ++i == batch.count )
                 break;
 
             index = ringnext( index, size );
@@ -395,7 +540,7 @@ void SOQUE_CALL netmap_soque_proc( struct nm_soque_espio * nms, unsigned batch, 
     }
     else // decap
     {
-        for( i = 0, index = start_index;; )
+        for( i = 0, index = batch.index;; )
         {
             ESPIO_IOVEC * iov = &nms->iovs[index];
 
@@ -403,25 +548,25 @@ void SOQUE_CALL netmap_soque_proc( struct nm_soque_espio * nms, unsigned batch, 
             iov->data_len -= ESP_GOST_SHIFT;
             iov->code = -1;
 
-            if( ++i == batch )
+            if( ++i == batch.count )
                 break;
 
             index = ringnext( index, size );
         }
 
-        if( start_index + batch <= size )
+        if( batch.index + batch.count <= size )
         {
-            eio->espio_decrypt( nms->eh, batch, &nms->iovs[start_index] );
+            eio->espio_decrypt( nms->eh, batch.count, &nms->iovs[batch.index] );
         }
         else
         {
-            uint32_t first_batch = size - start_index;
+            uint32_t first_batch = size - batch.index;
 
-            eio->espio_decrypt( nms->eh, first_batch, &nms->iovs[start_index] );
-            eio->espio_decrypt( nms->eh, batch - first_batch, &nms->iovs[0] );
+            eio->espio_decrypt( nms->eh, first_batch, &nms->iovs[batch.index] );
+            eio->espio_decrypt( nms->eh, batch.count - first_batch, &nms->iovs[0] );
         }
 
-        for( i = 0, index = start_index;; )
+        for( i = 0, index = batch.index;; )
         {
             ESPIO_IOVEC * iov = &nms->iovs[index];
 
@@ -431,7 +576,7 @@ void SOQUE_CALL netmap_soque_proc( struct nm_soque_espio * nms, unsigned batch, 
                 iov->code--;
             }
 
-            if( ++i == batch )
+            if( ++i == batch.count )
                 break;
 
             index = ringnext( index, size );
@@ -439,8 +584,9 @@ void SOQUE_CALL netmap_soque_proc( struct nm_soque_espio * nms, unsigned batch, 
     }
 }
 
-int SOQUE_CALL netmap_soque_pop( struct nm_soque_espio * nms, unsigned batch, char waitable )
+uint32_t SOQUE_CALL netmap_soque_pop( void * cb_arg, uint32_t batch, uint8_t waitable )
 {
+    struct nm_soque_espio * nms = cb_arg;
     uint32_t pop_space;
 
     (void)waitable; // pop_space power
@@ -482,7 +628,7 @@ int SOQUE_CALL netmap_soque_pop( struct nm_soque_espio * nms, unsigned batch, ch
             {
                 if( nms->encap )
                 {
-                    unsigned shift;
+                    uint16_t shift;
 
                     memcpy( dst_buf, &nms->etherip, sizeof( nms->etherip ) );
                     shift = sizeof( nms->etherip );
@@ -671,8 +817,13 @@ int main( int argc, char ** argv )
     
     init_esppkt();
 
+#ifdef _WIN32
+    eio = espio_framework();
+    soq = soque_framework();
+#else
     if( !soque_load() || !espio_load() )
         return 1;
+#endif
 
     fprintf( stderr, "%s built %s %s\n",
         argv[0], __DATE__, __TIME__ );
@@ -790,8 +941,8 @@ int main( int argc, char ** argv )
     nmd_to_nms( pa, pb, &nms_local, 1 );
     nmd_to_nms( pb, pa, &nms_remote, 0 );
 
-    sh[0] = soq->soque_open( nms_local.src_slots_count, &nms_local, (soque_push_cb)netmap_soque_push, (soque_proc_cb)netmap_soque_proc, (soque_pop_cb)netmap_soque_pop );
-    sh[1] = soq->soque_open( nms_remote.src_slots_count, &nms_remote, (soque_push_cb)netmap_soque_push, (soque_proc_cb)netmap_soque_proc, (soque_pop_cb)netmap_soque_pop );
+    sh[0] = soq->soque_open( nms_local.src_slots_count, &nms_local, netmap_soque_push, esptun_proc, netmap_soque_pop );
+    sh[1] = soq->soque_open( nms_remote.src_slots_count, &nms_remote, netmap_soque_push, esptun_proc, netmap_soque_pop );
 
     nms_local.eh = eio->espio_open( "pa", "pb", threads );
     nms_remote.eh = eio->espio_open( "pb", "pa", threads );
@@ -811,7 +962,7 @@ int main( int argc, char ** argv )
 
     D( "exiting" );
 
-    soq->soque_threads_done( sth );
+    soq->soque_threads_close( sth );
     nm_close( pb );
     nm_close( pa );
 

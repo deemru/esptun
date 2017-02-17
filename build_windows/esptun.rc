@@ -1,0 +1,27 @@
+#include <windows.h>
+#include "esptun_ver.rc"
+
+2 ICON "esptun.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     DATETIMEVERSION
+PRODUCTVERSION  DATETIMEVERSION
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "FileDescription", "ESP tunneling application\0"
+            VALUE "LegalCopyright", "deemru\0"
+            VALUE "ProductName", "esptun\0"
+            VALUE "ProductVersion", "512K\0"
+        END
+    END
+
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1252
+    END
+END
