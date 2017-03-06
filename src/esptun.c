@@ -49,22 +49,24 @@ static void gettimeofday( struct timeval * stv, void * unused )
 #define mmap win32_mmap_emulated
 #define poll win_nm_poll
 
-static int index( char * syms, char c )
+static const char * index( const char * syms, char c )
 {
     char sym;
 
     for( ;; )
     {
-        sym = *syms++;
+        sym = *syms;
 
         if( sym == 0 )
             break;
 
         if( sym == c )
-            return 1;
+            return syms;
+
+        syms++;
     }
 
-    return 0;
+    return NULL;
 }
 
 static char * optarg = NULL;
@@ -99,7 +101,7 @@ static int getopt( int argc, char ** argv, char * opts )
             argc_inner++;
             argv_inner++;
 
-            if( argc - argc_inner > 0 )
+            if( *opts == ':' )
             {
                 optarg = *argv_inner++;
                 argc_inner++;
@@ -232,9 +234,13 @@ struct etherip {
 #ifdef _WIN32
 
 #include "../include/espio/src/espio.h"
+#ifndef ESPIO_WITH_LOADER
 static const ESPIO_FRAMEWORK * eio;
+#endif
 #include "../include/soque/src/soque.h"
+#ifndef SOQUE_WITH_LOADER
 static const SOQUE_FRAMEWORK * soq;
+#endif
 
 #else
 
@@ -419,6 +425,10 @@ uint32_t SOQUE_CALL netmap_soque_push( void * cb_arg, uint32_t batch, uint8_t wa
     unsigned rings_count = nms->src_rings_count;
     struct netmap_ring ** rings = nms->src_rings;
 
+#ifdef _WIN32
+    waitable = 0;
+#endif
+
     if( waitable )
     {
         struct pollfd pollfd;
@@ -513,7 +523,7 @@ void SOQUE_CALL esptun_proc( void * cb_arg, SOQUE_BATCH batch )
             uint32_t first_batch = size - batch.index;
 
             eio->espio_encrypt( nms->eh, first_batch, &nms->iovs[batch.index] );
-            eio->espio_encrypt( nms->eh, batch.index - first_batch, &nms->iovs[0] );
+            eio->espio_encrypt( nms->eh, batch.count - first_batch, &nms->iovs[0] );
         }
 
         for( i = 0, index = batch.index;; )
@@ -817,11 +827,17 @@ int main( int argc, char ** argv )
     
     init_esppkt();
 
-#ifdef _WIN32
+#ifndef ESPIO_WITH_LOADER
     eio = espio_framework();
+#else
+    if( !espio_load() )
+        return 1;
+#endif
+
+#ifndef SOQUE_WITH_LOADER
     soq = soque_framework();
 #else
-    if( !soque_load() || !espio_load() )
+    if( !soque_load() )
         return 1;
 #endif
 
@@ -865,21 +881,12 @@ int main( int argc, char ** argv )
             threshold = atoi( optarg );
             break;
         }
-
     }
 
     argc -= optind;
     argv += optind;
 
-    if( argc > 1 )
-        ifa = argv[1];
-    if( argc > 2 )
-        ifb = argv[2];
-    if( argc > 3 )
-        batch = atoi( argv[3] );
-    if( !ifb )
-        ifb = ifa;
-    if( !ifa ) {
+    if( !ifa || !ifb ) {
         D( "missing interface" );
         usage();
     }
