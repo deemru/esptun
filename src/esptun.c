@@ -152,7 +152,7 @@ static int verbose = 0;
 static int do_abort = 0;
 static int zerocopy = 1; /* enable zerocopy if possible */
 static int threads = 2; // 1 <--> 1
-static int reaction = 128;
+static int reaction = 16;
 
 static void
 sigint_h( int sig )
@@ -525,28 +525,6 @@ void SOQUE_CALL esptun_proc( void * cb_arg, SOQUE_BATCH batch )
             eio->espio_encrypt( nms->eh, first_batch, &nms->iovs[batch.index] );
             eio->espio_encrypt( nms->eh, batch.count - first_batch, &nms->iovs[0] );
         }
-
-        for( i = 0, index = batch.index;; )
-        {
-            ESPIO_IOVEC * iov = &nms->iovs[index];
-
-            if( iov->code == ESPIO_ABSORB )
-            {
-                iov->code++;
-                iov->code--;
-            }
-
-            if( iov->code == ESPIO_ERROR )
-            {
-                iov->code++;
-                iov->code--;
-            }
-
-            if( ++i == batch.count )
-                break;
-
-            index = ringnext( index, size );
-        }
     }
     else // decap
     {
@@ -574,22 +552,6 @@ void SOQUE_CALL esptun_proc( void * cb_arg, SOQUE_BATCH batch )
 
             eio->espio_decrypt( nms->eh, first_batch, &nms->iovs[batch.index] );
             eio->espio_decrypt( nms->eh, batch.count - first_batch, &nms->iovs[0] );
-        }
-
-        for( i = 0, index = batch.index;; )
-        {
-            ESPIO_IOVEC * iov = &nms->iovs[index];
-
-            if( iov->code != ESPIO_PASS )
-            {
-                iov->code++;
-                iov->code--;
-            }
-
-            if( ++i == batch.count )
-                break;
-
-            index = ringnext( index, size );
         }
     }
 }
@@ -671,6 +633,8 @@ uint32_t SOQUE_CALL netmap_soque_pop( void * cb_arg, uint32_t batch, uint8_t wai
             nms->src_rings[ring_index]->head = ringnext( nms->src_rings[ring_index]->head, size_src );
             pop_index = ringnext( pop_index, total_src );
         }
+
+        ioctl( nms->src_fd, NIOCRXSYNC, NULL );
 
         nms->dst_index = dst_index;
         nms->dst_rings[0]->head = dst_index;
